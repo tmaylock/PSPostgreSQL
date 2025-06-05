@@ -739,7 +739,8 @@ Create statement:
             if ($response -eq 'n') { break }
         }
 
-        $tabledata = Set-PGTableProperties -Object $InputObject -TableName $Table -SchemaName $Schema -PrimaryKeys $PrimaryKeys
+        #$tabledata = Set-PGTableProperties -Object $InputObject -TableName $Table -SchemaName $Schema -PrimaryKeys $PrimaryKeys
+        $tableData = Set-PGTablePropertiesAdvanced -Object $InputObject -TableName $Table -SchemaName $Schema -PrimaryKeys $PrimaryKeys
         $fields = $tabledata.Fields
         $pkey = $tabledata.PKey
         $tablename = $tabledata.TableName
