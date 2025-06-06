@@ -181,7 +181,7 @@ Function Get-PGSQLTableDefinitions {
             $pgsqlds = [System.Data.DataSet]::new()
             $pgsqlda.Fill($pgsqlds) | Out-Null
 
-            $global:tabledefinitions = $pgsqlds.Tables.ForEach{ $_ }
+            $global:tabledefinitions = $pgsqlds.Tables.Rows
 
         }
         catch {
