@@ -300,13 +300,16 @@ Function Invoke-PGSQLSelect {
         [System.Data.Odbc.odbcDataAdapter]$pgsqlda = New-Object system.Data.odbc.odbcDataAdapter($pgsqlcmd)    
         $pgsqlds = [System.Data.DataSet]::new()
         [void]$pgsqlda.Fill($pgsqlds)
-        $pgsqlcmd.Dispose()
-        $pgsqlda.Dispose()
-        $pgsqlds.Dispose()
         return $pgsqlds.Tables.Rows
+
     }
     catch {
         throw $_.exception
+    }
+    finally {
+        $pgsqlcmd.Dispose()
+        $pgsqlda.Dispose()
+        $pgsqlds.Dispose()
     }
   
 }
