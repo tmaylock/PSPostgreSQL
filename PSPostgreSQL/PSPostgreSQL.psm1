@@ -300,7 +300,11 @@ Function Invoke-PGSQLSelect {
         [System.Data.Odbc.odbcDataAdapter]$pgsqlda = New-Object system.Data.odbc.odbcDataAdapter($pgsqlcmd)    
         $pgsqlds = [System.Data.DataSet]::new()
         [void]$pgsqlda.Fill($pgsqlds)
-        return $pgsqlds.Tables.Rows
+        $rows = [System.Collections.Generic.List[object]]::new()
+        foreach ($row in $pgsqlds.Tables[0].Rows) {
+            $rows.Add($row)
+        }
+        return $rows.ToArray()
 
     }
     catch {
