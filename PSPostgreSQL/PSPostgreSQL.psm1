@@ -158,6 +158,7 @@ Function Get-LatestPGODBCDriver {
 }
 
 Function Get-PGSQLTableDefinitions {
+    [CmdletBinding()]
     param(
         [switch]
         $Force
@@ -170,6 +171,10 @@ Function Get-PGSQLTableDefinitions {
     .NOTES
         This function exists to reduce the amount of queries done against the DB. By storing the table definitions in a variable, we can reference this in memory instead of querying the DB before each insert.
     #>
+    if ($PgSqlConnection -eq $null) {
+        Write-Error "PostgreSQL connection is not established. Please connect using Connect-PgSqlServer."
+        return
+    }
     if ('' -eq [string]$tabledefinitions -or $Force) {
         try {
 
@@ -179,12 +184,19 @@ Function Get-PGSQLTableDefinitions {
     where table_schema not like '%timescaledb_%'
     and table_schema not in ('information_schema','pg_catalog')
 '@
+            Write-Verbose "Retrieving table definitions from PostgreSQL with query:`n$query"
             [System.Data.Odbc.OdbcCommand]$pgsqlcmd = New-Object System.Data.Odbc.OdbcCommand($query, $PgSqlConnection)
             [System.Data.Odbc.odbcDataAdapter]$pgsqlda = New-Object system.Data.odbc.odbcDataAdapter($pgsqlcmd)    
             $pgsqlds = [System.Data.DataSet]::new()
             $pgsqlda.Fill($pgsqlds) | Out-Null
 
-            $global:tabledefinitions = $pgsqlds.Tables.Rows
+            $rows = [System.Collections.Generic.List[object]]::new()
+            foreach ($row in $pgsqlds.Tables[0].Rows) {
+                $rows.Add($row)
+            }
+            $global:tabledefinitions = $rows.ToArray() 
+
+            Write-Verbose "Retrieved table definitions from PostgreSQL"
 
         }
         catch {
@@ -372,6 +384,8 @@ Function Set-PGSQLInsert {
         $Table
     )
     try {
+        $fn = $MyInvocation.MyCommand.Name
+        Write-Verbose "[$fn] Building insert statement for schema: $Schema, table: $Table"
         $schema = $Schema
         $table = $table
         $columns = @()
@@ -379,21 +393,26 @@ Function Set-PGSQLInsert {
         $definitions = @()
         $pgColumns = @()
         $insertstatement = $null
+        Write-Debug "[$fn] Getting columns from InputObject via Get-Member"
         $Columns = ($InputObject | Get-Member).Where({ $_.membertype -in ('Property', 'NoteProperty') }) | Select-Object name,
         @{name = 'Property'; expression = { $_.name.trim().tolower() -replace '(\(|\)|\%)', '' -replace '( |/|-)', '_' } }, 
         @{name = 'DataType'; expression = { $_.definition.split(' ')[0] } } -Unique | Sort-Object -Property name
 
         if ($PgSqlConfig.EnableCachedTableDefinitions -eq $true) {
+            Write-Verbose "[$fn] Using cached table definitions."
             $definitions = $tabledefinitions | Where-Object { $_.table_schema -ceq $schema -and $_.table_name -ceq $table } | Select-Object column_name, data_type, is_nullable
         }
         else {
+            Write-Verbose "[$fn] Querying live table definitions from information_schema.columns."
             $definitions = Invoke-PGSqlQuery -Type Select -Query "SELECT column_name,data_type,is_nullable FROM information_schema.columns WHERE table_schema = '$schema' and table_name = '$table'"
         }
+        Write-Debug "[$fn] Table definitions: $($definitions | Out-String)"
         if (!$definitions) {
             Write-Error "$schema.$table - Does not exist"
             return
         }
 
+        Write-Debug "[$fn] Filtering columns to match table definitions."
         $pgColumns = $columns.Where({ $_.property -in $definitions.column_name })
         $comparecolumns = ($inputobject[0].psobject.properties).name.trim().tolower() -replace '(\(|\)|\%)', '' -replace '( |/|-)', '_'
         $insertcolumns = @()
@@ -405,22 +424,29 @@ Function Set-PGSQLInsert {
                 $selcolumns += $column.name
             }
         }
+        Write-Debug "[$fn] Insert columns: $($insertcolumns -join ', ')"
+        Write-Debug "[$fn] Select columns: $($selcolumns -join ', ')"
 
         if (-not (Compare-Object @($comparecolumns) @($pgcolumns.name)) ) {
+            Write-Verbose "[$fn] No column differences detected between input and table."
         }
         else {
+            Write-Verbose "[$fn] InputObject columns differ from table, selecting only matching columns."
             $InputObject = $InputObject | Select-Object -Property $selcolumns
         }
 
         $pgcolumns_string = [System.String]::Join(', ', $insertcolumns)
         $pkeys = ($definitions.Where({ [string]$_.is_nullable -eq 'NO' })).column_name
+        Write-Debug "[$fn] Primary keys detected: $($pkeys -join ', ')"
         if ($null -eq $pkeys) {
             Write-Error 'Primary Keys have not been defined'
             break
         }
         $pkeys_string = [System.String]::Join(',', $pkeys)
         $excluded = ($definitions.Where({ [string]$_.is_nullable -eq 'YES' })).column_name
-            
+        Write-Debug "[$fn] Excluded (nullable) columns: $($excluded -join ', ')"
+        
+        Write-Verbose "[$fn] Building VALUES clause for insert."
         $values = [System.String]::Join(',', (& { foreach ($property in $InputObject) {
                         $membervalues = foreach ($member in $($property.psobject.properties)) {
                             $membervalue = [string]$member.value
@@ -428,10 +454,11 @@ Function Set-PGSQLInsert {
                         } 
                         '(' + [System.String]::Join(',', $membervalues) + ')'
                     } }))
-
+        Write-Debug "[$fn] VALUES clause: $values"
 
         switch ($onconflict) {
             'Set Excluded' { 
+                Write-Verbose "[$fn] ON CONFLICT: Set Excluded"
                 if ($excluded) {
                     $excludedcolumns = foreach ($exc in $excluded) {
                         if ($exc -in $sqlkeywords) { $exc = "`"$exc`"" }
@@ -439,17 +466,21 @@ Function Set-PGSQLInsert {
                     }
                     $excludedcolumns = [System.String]::Join(',', $excludedcolumns)
                     $conflictstatement = "ON CONFLICT ($pkeys_string) DO UPDATE SET $excludedcolumns"
+                    Write-Debug "[$fn] Conflict statement: $conflictstatement"
                 }
                 else {
                     $conflictstatement = 'ON CONFLICT DO NOTHING'
+                    Write-Debug "[$fn] No excluded columns, using DO NOTHING."
                 }
                 break
             }
             'Do Nothing' {
+                Write-Verbose "[$fn] ON CONFLICT: Do Nothing"
                 $conflictstatement = 'ON CONFLICT DO NOTHING'
                 break
             }
             'null' {
+                Write-Verbose "[$fn] ON CONFLICT: null (no conflict statement)"
                 $conflictstatement = $null 
                 break
             }
@@ -457,21 +488,25 @@ Function Set-PGSQLInsert {
         }
 
         if ($schema -cmatch '[A-Z]') { $insertinto = "`"$($schema)`".$table ($pgcolumns_string)" } else { $insertinto = "$($schema).$table ($pgcolumns_string)" }
+        Write-Debug "[$fn] INSERT INTO clause: $insertinto"
 
         $insertstatement = @"
     INSERT INTO $insertinto
     VALUES $values
     $conflictstatement;
 "@
-    
+        Write-Verbose "[$fn] Final insert statement built."
+        Write-Debug "[$fn] Insert statement:`n$insertstatement"
         return $insertstatement
     }
     catch {
-        $_.Exception
+        Write-Error "[$fn] Exception: $($_.Exception.Message)"
+        Write-Debug "[$fn] Exception details: $($_ | Out-String)"
     }
     finally {
         $values = $null
         $insertstatement = $null
+        Write-Debug "[$fn] Cleaned up temporary variables."
     }
 }
 Function Invoke-PGSQLTruncate {
@@ -1025,10 +1060,10 @@ Function Invoke-PGSqlQuery {
     begin {
         
         $Params = @{}
-        if ($PSBoundParameters.ContainsKey('Verbose')) {
+        if ($PSBoundParameters.ContainsKey('Verbose') -and $PSBoundParameters.Verbose -eq $true) {
             $Params['Verbose'] = $PSBoundParameters.Verbose
         }
-        if ($PSBoundParameters.ContainsKey('Debug')) {
+        if ($PSBoundParameters.ContainsKey('Debug') -and $PSBoundParameters.Debug -eq $true) {
             $Params['Debug'] = $PSBoundParameters.Debug
         }
 
