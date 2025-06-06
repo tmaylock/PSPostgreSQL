@@ -1249,7 +1249,7 @@ function Set-PGTablePropertiesAdvanced {
     [void][System.Reflection.Assembly]::LoadWithPartialName('System.Drawing')
 
     $form = New-Object Windows.Forms.Form
-    $form.Text = 'PostgreSQL Table Designer (Advanced)'
+    $form.Text = 'PostgreSQL Table Designer'
     $form.Size = [Drawing.Size]::new(900, 800)
     $form.MinimumSize = [Drawing.Size]::new(900, 800)
     $form.MaximizeBox = $false
@@ -1260,7 +1260,7 @@ function Set-PGTablePropertiesAdvanced {
 
     # Header
     $lblHeader = New-Object Windows.Forms.Label
-    $lblHeader.Text = 'PostgreSQL Table Designer (Advanced)'
+    $lblHeader.Text = 'PostgreSQL Table Designer'
     $lblHeader.Font = New-Object Drawing.Font('Segoe UI', 16, [Drawing.FontStyle]::Bold)
     $lblHeader.AutoSize = $true
     $lblHeader.Location = [Drawing.Point]::new(20, 10)
@@ -1326,7 +1326,6 @@ function Set-PGTablePropertiesAdvanced {
     # Add header row (now with 'Include' checkbox column)
     $x0 = 10
     $y = 25
-    $headers = @('Include', 'Column', 'Type', 'NOT NULL', 'Primary Key', 'Default Value')
     $headers = @('Include', 'Column', 'Type', 'Primary Key', 'NOT NULL', 'Default Value')
     $widths = @(60, 150, 120, 100, 90, 180)
     $x = $x0
@@ -1398,7 +1397,7 @@ function Set-PGTablePropertiesAdvanced {
 
         # Default value TextBox
         $txtDefault = New-Object Windows.Forms.TextBox
-        $txtDefault.Location = [Drawing.Point]::new($x, $y)
+        $txtDefault.Location = [Drawing.Point]::new($x + 30, $y)
         $txtDefault.Size = [Drawing.Size]::new($widths[5], 24)
         $gbColumns.Controls.Add($txtDefault)
         $row.Default = $txtDefault
