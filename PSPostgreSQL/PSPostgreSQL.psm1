@@ -103,7 +103,7 @@ Function Get-PgSqlConfig {
     [CmdletBinding()]
     param ()
     if ($null -eq $global:PgSqlConfig) {
-        Set-PgSqlConfig
+        Test-PgSqlConfig
     }
     return $global:PgSqlConfig
 }
@@ -169,11 +169,29 @@ Function Get-PGSQLTableDefinitions {
     #>
     if ('' -eq [string]$tabledefinitions -or $Force) {
         try {
-            $global:tabledefinitions = Get-PGSQLColumns -ExcludeSystemColumns
+
+            $query = @'
+    SELECT table_schema,table_name,column_name,data_type,is_nullable
+    FROM information_schema.columns
+    where table_schema not like '%timescaledb_%'
+    and table_schema not in ('information_schema','pg_catalog')
+'@
+            [System.Data.Odbc.OdbcCommand]$pgsqlcmd = New-Object System.Data.Odbc.OdbcCommand($query, $PgSqlConnection)
+            [System.Data.Odbc.odbcDataAdapter]$pgsqlda = New-Object system.Data.odbc.odbcDataAdapter($pgsqlcmd)    
+            $pgsqlds = [System.Data.DataSet]::new()
+            $pgsqlda.Fill($pgsqlds) | Out-Null
+
+            $global:tabledefinitions = $pgsqlds.Tables.ForEach{ $_ }
+
         }
         catch {
             Write-Error "Failed to retrieve table definitions: $($_.Exception.Message)"
             return
+        }
+        finally {
+            if ($null -ne $pgsqlcmd) { $pgsqlcmd.Dispose() }
+            if ($null -ne $pgsqlda) { $pgsqlda.Dispose() }
+            if ($null -ne $pgsqlds) { $pgsqlds.Dispose() }
         }
     }
 }
@@ -231,7 +249,7 @@ Function Connect-PgSqlServer {
     
   
     try {
-        if ($null -eq $global:PgSqlConnection -or $Force -or $PgSqlConnection.ConnectionString -ne "Driver={PostgreSQL Unicode(x64)};Server=$($PSBoundParameters['Server']);Port=$Port;Database=$($PSBoundParameters['Database']);Uid=$($PSBoundParameters['User'] );Pwd=$($PSBoundParameters['Password']);Pooling=true;") {
+        if ($null -eq $global:PgSqlConnection -or $Force) {
             $PgSqlConnection = New-Object System.Data.Odbc.OdbcConnection
             $PgSqlConnection.ConnectionString = "Driver={PostgreSQL Unicode(x64)};Server=$($PSBoundParameters['Server']);Port=$Port;Database=$($PSBoundParameters['Database']);Uid=$($PSBoundParameters['User'] );Pwd=$($PSBoundParameters['Password']);Pooling=true;"
             $PgSqlConnection.ConnectionTimeout = 60
@@ -282,17 +300,15 @@ Function Invoke-PGSQLSelect {
         [System.Data.Odbc.odbcDataAdapter]$pgsqlda = New-Object system.Data.odbc.odbcDataAdapter($pgsqlcmd)    
         $pgsqlds = [System.Data.DataSet]::new()
         [void]$pgsqlda.Fill($pgsqlds)
+        $pgsqlcmd.Dispose()
+        $pgsqlda.Dispose()
+        $pgsqlds.Dispose()
         return $pgsqlds.Tables.Rows
     }
     catch {
         throw $_.exception
     }
-    finally {
-        $pgsqlcmd.Dispose()
-        $pgsqlda.Dispose()
-        $pgsqlds.Dispose()
-    }
-   
+  
 }
 
 Function Set-PGSQLInsert {
@@ -347,7 +363,7 @@ Function Set-PGSQLInsert {
             $definitions = $tabledefinitions | Where-Object { $_.table_schema -ceq $schema -and $_.table_name -ceq $table } | Select-Object column_name, data_type, is_nullable
         }
         else {
-            $definitions = Invoke-PGSQLSelect -Query "SELECT column_name,data_type,is_nullable FROM information_schema.columns WHERE table_schema = '$schema' and table_name = '$table'"
+            $definitions = Invoke-PGSqlQuery -Type Select -Query "SELECT column_name,data_type,is_nullable FROM information_schema.columns WHERE table_schema = '$schema' and table_name = '$table'"
         }
         if (!$definitions) {
             Write-Error "$schema.$table - Does not exist"
@@ -647,7 +663,7 @@ Function Add-PGSQLTable {
                 throw 'ReadOnlyGroup value missing'
             }
             elseif ($ReadOnlyGroup -ne '') {
-                $readonlygroup_exists = Invoke-PGSQLSelect -Query "select * from pg_group where groname = '$ReadOnlyGroup'"
+                $readonlygroup_exists = Invoke-PGSQLQuery -Type Select -Query "select * from pg_group where groname = '$ReadOnlyGroup'"
                 if ($null -eq $readonlygroup_exists) {
                     $errormessage = @"
 
@@ -765,7 +781,7 @@ CONSTRAINT $pkey_name PRIMARY KEY ($($pkey_value))
 "@
 
 
-        $tableexists = Invoke-PGSQLSelect -Query "SELECT * from information_schema.tables WHERE table_schema = '$schemaname' and table_name = '$tablename'" 
+        $tableexists = Invoke-PGSQLQuery -Type Select -Query "SELECT * from information_schema.tables WHERE table_schema = '$schemaname' and table_name = '$tablename'" 
 
         if ($tableexists) {
             Write-Host "$createschema.$tablename - Already Exists" -ForegroundColor Red
@@ -774,15 +790,15 @@ CONSTRAINT $pkey_name PRIMARY KEY ($($pkey_value))
 
 
 
-        Invoke-PGSQLSelect -Query $createtablestatement
+        Invoke-PGSQLQuery -Type Select -Query $createtablestatement
         Write-Host -Object $createtablestatement -ForegroundColor Blue
         
-        $tablecreated = Invoke-PGSQLSelect -Query "SELECT * from information_schema.tables WHERE table_schema = '$schemaname' and table_name = '$tablename'" 
+        $tablecreated = Invoke-PGSQLQuery -Type Select -Query "SELECT * from information_schema.tables WHERE table_schema = '$schemaname' and table_name = '$tablename'" 
         if ($tablecreated) {
             Write-Host "$createschema.$tablename - Created Successfully" -ForegroundColor Green
         
             if ($GrantReadOnly) {
-                Invoke-PGSQLSelect -Query "grant select on $createschema.$tablename to $ReadOnlyGroup;"
+                Invoke-PGSQLQuery -Type Select -Query "grant select on $createschema.$tablename to $ReadOnlyGroup;"
                 Write-Host "$createschema.$tablename - Granted Select to `"$ReadOnlyGroup`"" -ForegroundColor Green
             }
         }
@@ -1054,7 +1070,7 @@ function Set-PGTablePropertiesAdvanced {
     $cmbSchema.Location = [Drawing.Point]::new(120, 52)
     $cmbSchema.Size = [Drawing.Size]::new(200, 28)
     $cmbSchema.DropDownStyle = 'DropDown'
-    $schemas = (Invoke-PGSQLSelect -Query "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT LIKE '%timescaledb_%'").schema_name | Sort-Object
+    $schemas = (Invoke-PGSQLQuery -Type Select -Query "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT LIKE '%timescaledb_%'").schema_name | Sort-Object
     $cmbSchema.Items.AddRange($schemas)
     if ($SchemaName) { $cmbSchema.SelectedItem = $SchemaName }
     $form.Controls.Add($cmbSchema)
@@ -1359,7 +1375,7 @@ function Get-PGSQLColumns {
     }
 
     $Query += " ORDER BY table_schema, table_name, ordinal_position"
-    Invoke-PGSQLSelect -Query $Query
+    Invoke-PGSQLQuery -Type Select -Query $Query
 }
 
 function Get-PGSQLTables {
@@ -1374,7 +1390,7 @@ function Get-PGSQLTables {
     }
     =
     $Query += " ORDER BY table_catalog, table_schema, table_name"
-    Invoke-PGSQLSelect -Query $Query
+    Invoke-PGSQLQuery -Type Select -Query $Query
 }
 
 function Get-PGSQLIndexes {
@@ -1388,7 +1404,7 @@ function Get-PGSQLIndexes {
         $Query = "SELECT schemaname, tablename, indexname, indexdef FROM pg_indexes"
     }
     $Query += " ORDER BY schemaname, tablename, indexname"
-    Invoke-PGSQLSelect -Query $Query
+    Invoke-PGSQLQuery -Type Select -Query $Query
 }
 
 function Get-PGSQLSchemas {
@@ -1403,6 +1419,6 @@ function Get-PGSQLSchemas {
     }
     $Query += " ORDER BY catalog_name, schema_name"
 
-    Invoke-PGSQLSelect -Query $Query
+    Invoke-PGSQLQuery -Type Select -Query $Query
 }
 
