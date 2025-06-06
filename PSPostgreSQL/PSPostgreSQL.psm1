@@ -1388,7 +1388,7 @@ function Get-PGSQLTables {
     else {
         $Query = "SELECT table_catalog, table_schema, table_name, table_type FROM information_schema.tables"
     }
-    =
+    
     $Query += " ORDER BY table_catalog, table_schema, table_name"
     Invoke-PGSQLQuery -Type Select -Query $Query
 }
