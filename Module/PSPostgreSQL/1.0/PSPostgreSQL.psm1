@@ -1376,7 +1376,7 @@ function Set-PGTablePropertiesAdvanced {
         $x += $widths[2]
 
 
-        # PK checkbox (now before NOT NULL)
+        # PK checkbox
         $chkPK = New-Object Windows.Forms.CheckBox
         $chkPK.Text = ''
         $chkPK.Location = [Drawing.Point]::new($x + 30, $y)
@@ -1386,7 +1386,7 @@ function Set-PGTablePropertiesAdvanced {
         $row.PK = $chkPK
         $x += $widths[3]
 
-        # NOT NULL checkbox (now after PK)
+        # NOT NULL checkbox
         $chkNotNull = New-Object Windows.Forms.CheckBox
         $chkNotNull.Text = ''
         $chkNotNull.Location = [Drawing.Point]::new($x + 30, $y)
