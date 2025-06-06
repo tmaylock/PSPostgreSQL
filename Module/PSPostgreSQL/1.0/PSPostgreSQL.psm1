@@ -250,7 +250,7 @@ Function Connect-PgSqlServer {
     
   
     try {
-        if ($null -eq $global:PgSqlConnection -or $Force) {
+        if ($null -eq $global:PgSqlConnection -or $Force -or $PgSqlConnection.ConnectionString -ne "Driver={PostgreSQL Unicode(x64)};Server=$($PSBoundParameters['Server']);Port=$Port;Database=$($PSBoundParameters['Database']);Uid=$($PSBoundParameters['User'] );Pwd=$($PSBoundParameters['Password']);Pooling=true;") {
             $PgSqlConnection = New-Object System.Data.Odbc.OdbcConnection
             $PgSqlConnection.ConnectionString = "Driver={PostgreSQL Unicode(x64)};Server=$($PSBoundParameters['Server']);Port=$Port;Database=$($PSBoundParameters['Database']);Uid=$($PSBoundParameters['User'] );Pwd=$($PSBoundParameters['Password']);Pooling=true;"
             $PgSqlConnection.ConnectionTimeout = 60
@@ -1266,115 +1266,6 @@ function Set-PGTablePropertiesAdvanced {
     $lblHeader.Location = [Drawing.Point]::new(20, 10)
     $form.Controls.Add($lblHeader)
 
-    $chkDarkTheme = New-Object Windows.Forms.CheckBox
-    $chkDarkTheme.Text = 'Dark Theme'
-    $chkDarkTheme.Location = [Drawing.Point]::new(700, 20)
-    $chkDarkTheme.Size = [Drawing.Size]::new(120, 24)
-
-    $form.Controls.Add($chkDarkTheme)
-
-    function Set-DarkTheme {
-        param($enabled)
-        # VS Code palette
-        $vscode_bg = '#1e1e1e' # Main background
-        $vscode_panel = '#252526' # Panel/GroupBox
-        $vscode_input = '#2d2d2d' # Input fields
-        $vscode_border = '#3c3c3c' # Borders
-        $vscode_button = '#0e639c' # Accent blue
-        $vscode_button2 = '#d18616' # Accent orange (for Cancel, optional)
-        $vscode_text = '#d4d4d4' # Main text
-        $vscode_text_dim = '#bbbbbb' # Dimmed text
-
-        if ($enabled) {
-            $form.BackColor = $vscode_bg
-            $form.ForeColor = $vscode_text
-            foreach ($ctrl in $form.Controls) {
-                # GroupBox/Panel
-                if ($ctrl -is [System.Windows.Forms.GroupBox]) {
-                    $ctrl.BackColor = $vscode_panel
-                    $ctrl.ForeColor = $vscode_text
-                    foreach ($sub in $ctrl.Controls) {
-                        if ($sub -is [System.Windows.Forms.TextBox] -or $sub -is [System.Windows.Forms.ComboBox] -or $sub -is [System.Windows.Forms.CheckedListBox]) {
-                            $sub.BackColor = $vscode_input
-                            $sub.ForeColor = $vscode_text
-                            if ($sub -is [System.Windows.Forms.TextBox]) { $sub.BorderStyle = 'FixedSingle' }
-                        }
-                        elseif ($sub -is [System.Windows.Forms.CheckBox]) {
-                            $sub.BackColor = $vscode_panel
-                            $sub.ForeColor = $vscode_text
-                        }
-                    }
-                }
-                # Buttons
-                elseif ($ctrl -is [System.Windows.Forms.Button]) {
-                    if ($ctrl.Text -eq 'Cancel') {
-                        $ctrl.BackColor = '#a4262c' # VS Code error red
-                        $ctrl.ForeColor = $vscode_text
-                    }
-                    else {
-                        $ctrl.BackColor = $vscode_button
-                        $ctrl.ForeColor = 'White'
-                    }
-                    $ctrl.FlatStyle = 'Flat'
-                    $ctrl.FlatAppearance.BorderColor = $vscode_border
-                }
-                # Labels
-                elseif ($ctrl -is [System.Windows.Forms.Label]) {
-                    $ctrl.BackColor = $vscode_bg
-                    $ctrl.ForeColor = $vscode_text
-                }
-                # Checkbox
-                elseif ($ctrl -is [System.Windows.Forms.CheckBox]) {
-                    $ctrl.BackColor = $vscode_bg
-                    $ctrl.ForeColor = $vscode_text
-                }
-                # Everything else
-                else {
-                    $ctrl.BackColor = $vscode_panel
-                    $ctrl.ForeColor = $vscode_text
-                }
-            }
-        }
-        else {
-            $form.BackColor = 'White'
-            $form.ForeColor = 'Black'
-            foreach ($ctrl in $form.Controls) {
-                if ($ctrl -is [System.Windows.Forms.GroupBox]) {
-                    $ctrl.BackColor = 'White'
-                    $ctrl.ForeColor = 'Black'
-                    foreach ($sub in $ctrl.Controls) {
-                        $sub.BackColor = 'White'
-                        $sub.ForeColor = 'Black'
-                        if ($sub -is [System.Windows.Forms.TextBox]) { $sub.BorderStyle = 'Fixed3D' }
-                    }
-                }
-                elseif ($ctrl -is [System.Windows.Forms.Button]) {
-                    if ($ctrl.Text -eq 'Cancel') {
-                        $ctrl.BackColor = [Drawing.Color]::FromArgb(232, 17, 35)
-                    }
-                    else {
-                        $ctrl.BackColor = [Drawing.Color]::FromArgb(0, 120, 215)
-                    }
-                    $ctrl.ForeColor = 'White'
-                    $ctrl.FlatStyle = 'Flat'
-                }
-                elseif ($ctrl -is [System.Windows.Forms.Label]) {
-                    $ctrl.BackColor = 'White'
-                    $ctrl.ForeColor = 'Black'
-                }
-                elseif ($ctrl -is [System.Windows.Forms.CheckBox]) {
-                    $ctrl.BackColor = 'White'
-                    $ctrl.ForeColor = 'Black'
-                }
-                else {
-                    $ctrl.BackColor = 'White'
-                    $ctrl.ForeColor = 'Black'
-                }
-            }
-        }
-    }
-    $chkDarkTheme.Add_CheckedChanged({ Set-DarkTheme $chkDarkTheme.Checked })
-    #$chkDarkTheme.Checked = $true
     # Schema Name (now on the left)
     $lblSchema = New-Object Windows.Forms.Label
     $lblSchema.Text = 'Schema Name:'
@@ -1388,11 +1279,6 @@ function Set-PGTablePropertiesAdvanced {
     $cmbSchema.DropDownStyle = 'DropDown'
     $schemas = (Invoke-PGSQLSelect -Query "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT LIKE '%timescaledb_%'").schema_name | Sort-Object
     $cmbSchema.Items.AddRange($schemas)
-    $cmbSchema.AutoCompleteMode = 'SuggestAppend'
-    $cmbSchema.AutoCompleteSource = 'CustomSource'
-    $autoSource = New-Object System.Windows.Forms.AutoCompleteStringCollection
-    $autoSource.AddRange($schemas)
-    $cmbSchema.AutoCompleteCustomSource = $autoSource
     if ($SchemaName) { $cmbSchema.SelectedItem = $SchemaName }
     $form.Controls.Add($cmbSchema)
     $toolTip.SetToolTip($cmbSchema, 'Select the schema for the new table.')
@@ -1411,22 +1297,12 @@ function Set-PGTablePropertiesAdvanced {
     $form.Controls.Add($txtTable)
     $toolTip.SetToolTip($txtTable, 'Enter the name for the new table.')
 
-    # GroupBox for Columns
+    # GroupBox for Columns (integrated per-row layout)
     $gbColumns = New-Object Windows.Forms.GroupBox
-    $gbColumns.Text = 'Columns (check to include, select type, constraints, default value)'
+    $gbColumns.Text = 'Columns (select column to include, type, constraints, default value)'
     $gbColumns.Location = [Drawing.Point]::new(20, 100)
-    #$gbColumns.Size = [Drawing.Size]::new(840, 350)
     $form.Controls.Add($gbColumns)
 
-    $clbColumns = New-Object Windows.Forms.CheckedListBox
-    $clbColumns.Location = [Drawing.Point]::new(10, 25)
-    $clbHeight = [Math]::Min([Math]::Max($properties.Count * 28, 64), 340)
-    $clbColumns.Size = [Drawing.Size]::new(150, $clbHeight)
-    $gbColumns.Size = [Drawing.Size]::new(840, $clbHeight + 50)
-    $clbColumns.CheckOnClick = $true
-    $gbColumns.Controls.Add($clbColumns)
-
-    # Data type combos, NOT NULL, PK, Default for each property
     $typeMap = @{
         'int' = 'integer'; 'string' = 'text'; 'bool' = 'boolean'; 'System.Boolean' = 'boolean'
         'System.Management.Automation.PSCustomObject' = 'jsonb'; 'object' = 'text'
@@ -1444,48 +1320,94 @@ function Set-PGTablePropertiesAdvanced {
     Select-Object @{n = 'Property'; e = { $_.Name.Trim() -replace '(\(|\)|\%)', '' -replace '( |/|-)', '_' } },
     @{n = 'DataType'; e = { $_.Definition.Split(' ')[0] } }
 
-    $comboBoxes = @{}
-    $notNullChecks = @{}
-    $pkChecks = @{}
-    $defaultBoxes = @{}
+    $rowControls = @{}
+    $rowHeight = 28
+    $headerFont = New-Object Drawing.Font('Segoe UI', 10, [Drawing.FontStyle]::Bold)
+    # Add header row (now with 'Include' checkbox column)
+    $x0 = 10
     $y = 25
-    foreach ($prop in $properties) {
-        $clbColumns.Items.Add($prop.Property, $true) | Out-Null
+    $headers = @('Include', 'Column', 'Type', 'NOT NULL', 'Primary Key', 'Default Value')
+    $headers = @('Include', 'Column', 'Type', 'Primary Key', 'NOT NULL', 'Default Value')
+    $widths = @(60, 150, 120, 100, 90, 180)
+    $x = $x0
+    for ($i = 0; $i -lt $headers.Count; $i++) {
+        $lbl = New-Object Windows.Forms.Label
+        $lbl.Text = $headers[$i]
+        $lbl.Location = [Drawing.Point]::new($x, $y)
+        $lbl.Size = [Drawing.Size]::new($widths[$i], 24)
+        $lbl.Font = $headerFont
+        $gbColumns.Controls.Add($lbl)
+        $x += $widths[$i]
+    }
+    $y += $rowHeight
 
+    foreach ($prop in $properties) {
+        $x = $x0
+        $row = @{}
+        # Include checkbox
+        $chkInclude = New-Object Windows.Forms.CheckBox
+        $chkInclude.Text = ''
+        $chkInclude.Checked = $true
+        # Place checkbox with a little padding, but not so much that it cuts off the label
+        $chkInclude.Location = [Drawing.Point]::new($x + 5, $y)
+        $chkInclude.Size = [Drawing.Size]::new($widths[0] - 10, 24)
+        $gbColumns.Controls.Add($chkInclude)
+        $row.Include = $chkInclude
+        $x += $widths[0]
+
+        # Property label
+        $lbl = New-Object Windows.Forms.Label
+        $lbl.Text = $prop.Property
+        # Place label with a little padding from the left edge of its cell
+        $lbl.Location = [Drawing.Point]::new($x + 2, $y)
+        $lbl.Size = [Drawing.Size]::new($widths[1] - 4, 24)
+        $gbColumns.Controls.Add($lbl)
+        $x += $widths[1]
+
+        # Type ComboBox
         $combo = New-Object Windows.Forms.ComboBox
-        $combo.Location = [Drawing.Point]::new(170, $y)
-        $combo.Size = [Drawing.Size]::new(120, 24)
+        $combo.Location = [Drawing.Point]::new($x, $y)
+        $combo.Size = [Drawing.Size]::new($widths[2], 24)
         $combo.DropDownStyle = 'DropDownList'
         $combo.Items.AddRange($typeOptions)
         $defaultType = $typeMap[$prop.DataType]
         if ($defaultType) { $combo.SelectedItem = $defaultType } else { $combo.SelectedIndex = 0 }
         $gbColumns.Controls.Add($combo)
-        $comboBoxes[$prop.Property] = $combo
+        $row.ComboBox = $combo
+        $x += $widths[2]
 
-        $chkNotNull = New-Object Windows.Forms.CheckBox
-        $chkNotNull.Text = 'NOT NULL'
-        $chkNotNull.Location = [Drawing.Point]::new(300, $y)
-        $chkNotNull.Size = [Drawing.Size]::new(90, 24)
-        $gbColumns.Controls.Add($chkNotNull)
-        $notNullChecks[$prop.Property] = $chkNotNull
 
+        # PK checkbox (now before NOT NULL)
         $chkPK = New-Object Windows.Forms.CheckBox
-        $chkPK.Text = 'Primary Key'
-        $chkPK.Location = [Drawing.Point]::new(400, $y)
-        $chkPK.Size = [Drawing.Size]::new(100, 24)
+        $chkPK.Text = ''
+        $chkPK.Location = [Drawing.Point]::new($x + 30, $y)
+        $chkPK.Size = [Drawing.Size]::new($widths[3], 24)
         if ($PrimaryKeys -and ($prop.Property -in $PrimaryKeys)) { $chkPK.Checked = $true }
         $gbColumns.Controls.Add($chkPK)
-        $pkChecks[$prop.Property] = $chkPK
+        $row.PK = $chkPK
+        $x += $widths[3]
 
+        # NOT NULL checkbox (now after PK)
+        $chkNotNull = New-Object Windows.Forms.CheckBox
+        $chkNotNull.Text = ''
+        $chkNotNull.Location = [Drawing.Point]::new($x + 30, $y)
+        $chkNotNull.Size = [Drawing.Size]::new($widths[4], 24)
+        $gbColumns.Controls.Add($chkNotNull)
+        $row.NotNull = $chkNotNull
+        $x += $widths[4]
+
+        # Default value TextBox
         $txtDefault = New-Object Windows.Forms.TextBox
-        $txtDefault.Location = [Drawing.Point]::new(510, $y)
-        $txtDefault.Size = [Drawing.Size]::new(120, 24)
+        $txtDefault.Location = [Drawing.Point]::new($x, $y)
+        $txtDefault.Size = [Drawing.Size]::new($widths[5], 24)
         $gbColumns.Controls.Add($txtDefault)
-        $defaultBoxes[$prop.Property] = $txtDefault
+        $row.Default = $txtDefault
 
-        $y += 28
+        $rowControls[$prop.Property] = $row
+        $y += $rowHeight
     }
-    $toolTip.SetToolTip($clbColumns, 'Check columns to include in the table. Use the dropdown to select the data type. Set NOT NULL, Primary Key, and default value as needed.')
+    $gbColumns.Size = [Drawing.Size]::new(840, $y + 20)
+    $toolTip.SetToolTip($gbColumns, 'Check Include to add column. Set type, NOT NULL, Primary Key, and default value for each column.')
 
     # SQL Preview
     $gbPreview = New-Object Windows.Forms.GroupBox
@@ -1507,19 +1429,18 @@ function Set-PGTablePropertiesAdvanced {
     function Update-Preview {
         $fields = @()
         $pkey = @()
-        for ($i = 0; $i -lt $clbColumns.Items.Count; $i++) {
-            if ($clbColumns.GetItemChecked($i)) {
-                $name = $clbColumns.Items[$i]
-                $type = $comboBoxes[$name].SelectedItem
-                $notnull = $notNullChecks[$name].Checked
-                $isPK = $pkChecks[$name].Checked
-                $defval = $defaultBoxes[$name].Text
-                $col = "$name $type"
-                if ($notnull) { $col += ' NOT NULL' }
-                if ($defval -and $defval -ne '') { $col += " DEFAULT '$defval'" }
-                $fields += $col
-                if ($isPK) { $pkey += $name }
-            }
+        foreach ($name in $rowControls.Keys) {
+            $row = $rowControls[$name]
+            if (-not $row.Include.Checked) { continue }
+            $type = $row.ComboBox.SelectedItem
+            $notnull = $row.NotNull.Checked
+            $isPK = $row.PK.Checked
+            $defval = $row.Default.Text
+            $col = "$name $type"
+            if ($notnull) { $col += ' NOT NULL' }
+            if ($defval -and $defval -ne '') { $col += " DEFAULT '$defval'" }
+            $fields += $col
+            if ($isPK) { $pkey += $name }
         }
         $tablename = $txtTable.Text
         $schemaname = $cmbSchema.Text
@@ -1532,24 +1453,31 @@ function Set-PGTablePropertiesAdvanced {
     }
 
     # Wire up events for all controls
-    foreach ($combo in $comboBoxes.Values) { $combo.Add_SelectedIndexChanged({ Update-Preview }) }
-    foreach ($chk in $notNullChecks.Values) { $chk.Add_CheckedChanged({ Update-Preview }) }
-    foreach ($chk in $pkChecks.Values) { $chk.Add_CheckedChanged({ Update-Preview }) }
-    foreach ($txt in $defaultBoxes.Values) { $txt.Add_TextChanged({ Update-Preview }) }
+    foreach ($row in $rowControls.Values) {
+        $row.Include.Add_CheckedChanged({ Update-Preview; Validate-Form })
+        $row.ComboBox.Add_SelectedIndexChanged({ Update-Preview })
+        $row.NotNull.Add_CheckedChanged({ Update-Preview })
+        $row.PK.Add_CheckedChanged({
+            $thisRow = $null
+            foreach ($key in $rowControls.Keys) {
+                if ($rowControls[$key].PK -eq $this) { $thisRow = $rowControls[$key]; break }
+            }
+            if ($null -ne $thisRow -and $this.Checked) {
+                $thisRow.NotNull.Checked = $true
+            }
+            Update-Preview
+            Validate-Form
+        })
+        $row.Default.Add_TextChanged({ Update-Preview })
+    }
     $txtTable.Add_TextChanged({ Update-Preview })
     $cmbSchema.Add_SelectedIndexChanged({ Update-Preview })
-    $clbColumns.Add_ItemCheck({ Start-Sleep -Milliseconds 10; Update-Preview })
 
     # OK/Cancel buttons
     $btnOK = New-Object Windows.Forms.Button
     $btnOK.Text = 'OK'
     $btnOK.Size = [Drawing.Size]::new(120, 40)
-    #$btnOK.Location = [Drawing.Point]::new(1000, 700)
-    #$btnOK.Font = New-Object Drawing.Font("Consolas", 12, [Drawing.FontStyle]::Bold)
-    #$btnOK.BackColor = [Drawing.Color]::FromArgb(0, 120, 215)
-    #$btnOK.ForeColor = [Drawing.Color]::White
     $btnOK.FlatStyle = 'System'
-    $btnOK.Enabled = $true
     $btnOK.Location = [Drawing.Point]::new($form.ClientSize.Width - 260, $form.ClientSize.Height - 70)
     $btnOK.Anchor = 'Bottom,Right'
     $form.Controls.Add($btnOK)
@@ -1557,10 +1485,6 @@ function Set-PGTablePropertiesAdvanced {
     $btnCancel = New-Object Windows.Forms.Button
     $btnCancel.Text = 'Cancel'
     $btnCancel.Size = [Drawing.Size]::new(120, 40)
-    #$btnCancel.Location = [Drawing.Point]::new(1150, 700)
-    #$btnCancel.Font = New-Object Drawing.Font("Consolas", 12, [Drawing.FontStyle]::Bold)
-    #$btnCancel.BackColor = [Drawing.Color]::FromArgb(232, 17, 35)
-    #$btnCancel.ForeColor = [Drawing.Color]::White
     $btnCancel.FlatStyle = 'System'
     $btnCancel.Location = [Drawing.Point]::new($form.ClientSize.Width - 130, $form.ClientSize.Height - 70)
     $btnCancel.Anchor = 'Bottom,Right'
@@ -1572,11 +1496,11 @@ function Set-PGTablePropertiesAdvanced {
         if (-not $txtTable.Text -or -not $cmbSchema.Text) { $ok = $false }
         $checkedCols = 0
         $checkedPK = 0
-        for ($i = 0; $i -lt $clbColumns.Items.Count; $i++) {
-            if ($clbColumns.GetItemChecked($i)) {
+        foreach ($name in $rowControls.Keys) {
+            $row = $rowControls[$name]
+            if ($row.Include.Checked) {
                 $checkedCols++
-                $name = $clbColumns.Items[$i]
-                if ($pkChecks[$name].Checked) { $checkedPK++ }
+                if ($row.PK.Checked) { $checkedPK++ }
             }
         }
         if ($checkedCols -lt 1) { $ok = $false }
@@ -1586,8 +1510,7 @@ function Set-PGTablePropertiesAdvanced {
 
     $txtTable.Add_TextChanged({ Validate-Form })
     $cmbSchema.Add_SelectedIndexChanged({ Validate-Form })
-    $clbColumns.Add_ItemCheck({ Start-Sleep -Milliseconds 100; Validate-Form })
-    foreach ($chk in $pkChecks.Values) { $chk.Add_CheckedChanged({ Validate-Form }) }
+    foreach ($row in $rowControls.Values) { $row.PK.Add_CheckedChanged({ Validate-Form }) }
 
     # Keyboard shortcuts
     $form.KeyPreview = $true
@@ -1623,17 +1546,16 @@ function Set-PGTablePropertiesAdvanced {
     # Gather selections
     $fields = @()
     $pkey = @()
-    for ($i = 0; $i -lt $clbColumns.Items.Count; $i++) {
-        if ($clbColumns.GetItemChecked($i)) {
-            $name = $clbColumns.Items[$i]
-            $fields += [PSCustomObject]@{
-                Name    = $name
-                Type    = $comboBoxes[$name].SelectedItem
-                NotNull = $notNullChecks[$name].Checked
-                Default = $defaultBoxes[$name].Text
-            }
-            if ($pkChecks[$name].Checked) { $pkey += $name }
+    foreach ($name in $rowControls.Keys) {
+        $row = $rowControls[$name]
+        if (-not $row.Include.Checked) { continue }
+        $fields += [PSCustomObject]@{
+            Name    = $name
+            Type    = $row.ComboBox.SelectedItem
+            NotNull = $row.NotNull.Checked
+            Default = $row.Default.Text
         }
+        if ($row.PK.Checked) { $pkey += $name }
     }
 
     [PSCustomObject]@{
