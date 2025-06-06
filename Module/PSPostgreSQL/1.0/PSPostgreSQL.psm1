@@ -169,30 +169,11 @@ Function Get-PGSQLTableDefinitions {
     #>
     if ('' -eq [string]$tabledefinitions -or $Force) {
         try {
-
-            $query = @'
-    SELECT table_schema,table_name,column_name,data_type,is_nullable
-    FROM information_schema.columns
-    where table_schema not like '%timescaledb_%'
-    and table_schema not in ('information_schema','pg_catalog')
-'@
-            [System.Data.Odbc.OdbcCommand]$pgsqlcmd = New-Object System.Data.Odbc.OdbcCommand($query, $PgSqlConnection)
-            [System.Data.Odbc.odbcDataAdapter]$pgsqlda = New-Object system.Data.odbc.odbcDataAdapter($pgsqlcmd)    
-            $pgsqlds = [System.Data.DataSet]::new()
-            [void]$pgsqlda.Fill($pgsqlds)
-
-            $global:tabledefinitions = $pgsqlds.Tables.Rows
-
+            $global:tabledefinitions = Get-PGSQLColumns -ExcludeSystemColumns
         }
         catch {
             Write-Error "Failed to retrieve table definitions: $($_.Exception.Message)"
             return
-        }
-        finally {
-            if ($null -ne $pgsqlcmd) { $pgsqlcmd.Dispose() }
-            if ($null -ne $pgsqlda) { $pgsqlda.Dispose() }
-            if ($null -ne $pgsqlds) { $pgsqlds.Dispose() }
-            $PgSqlConnection.Close()
         }
     }
 }
@@ -666,7 +647,7 @@ Function Add-PGSQLTable {
                 throw 'ReadOnlyGroup value missing'
             }
             elseif ($ReadOnlyGroup -ne '') {
-                $readonlygroup_exists = Invoke-PGSqlQuery -Type Select -Query "select * from pg_group where groname = '$ReadOnlyGroup'"
+                $readonlygroup_exists = Invoke-PGSQLSelect -Query "select * from pg_group where groname = '$ReadOnlyGroup'"
                 if ($null -eq $readonlygroup_exists) {
                     $errormessage = @"
 
@@ -739,7 +720,6 @@ Create statement:
             if ($response -eq 'n') { break }
         }
 
-        #$tabledata = Set-PGTableProperties -Object $InputObject -TableName $Table -SchemaName $Schema -PrimaryKeys $PrimaryKeys
         $tableData = Set-PGTablePropertiesAdvanced -Object $InputObject -TableName $Table -SchemaName $Schema -PrimaryKeys $PrimaryKeys
         $fields = $tabledata.Fields
         $pkey = $tabledata.PKey
@@ -1023,210 +1003,7 @@ Function Invoke-PGSqlQuery {
     }
 }
 
-function Set-PGTableProperties {
-    <#
-    .SYNOPSIS
-        Interactive GUI for selecting table name, schema, columns, types, and primary keys.
-    .DESCRIPTION
-        Lets the user select which properties to include as columns, their types, and which are primary keys.
-    .PARAMETER Object
-        The input object (array of PSCustomObject) to analyze.
-    .PARAMETER TableName
-        Optional default table name.
-    .PARAMETER SchemaName
-        Optional default schema name.
-    .PARAMETER PrimaryKeys
-        Optional array of default primary key names.
-    .OUTPUTS
-        [PSCustomObject] with Fields, PKey, TableName, SchemaName
-    #>
-    param (
-        [Parameter(Mandatory = $true)]
-        $Object,
-        [string]$TableName,
-        [string]$SchemaName,
-        [array]$PrimaryKeys
-    )
 
-    [void][System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms')
-    [void][System.Reflection.Assembly]::LoadWithPartialName('System.Drawing')
-
-    $form = New-Object Windows.Forms.Form
-    $form.Text = 'PostgreSQL Table Designer'
-    $form.Size = [Drawing.Size]::new(900, 650)
-    $form.MinimumSize = [Drawing.Size]::new(900, 650)
-    $form.MaximizeBox = $false
-    $form.StartPosition = 'CenterScreen'
-    $form.Font = New-Object Drawing.Font('Segoe UI', 10)
-
-    $toolTip = New-Object System.Windows.Forms.ToolTip
-
-    # Header
-    $lblHeader = New-Object Windows.Forms.Label
-    $lblHeader.Text = 'PostgreSQL Table Designer'
-    $lblHeader.Font = New-Object Drawing.Font('Segoe UI', 16, [Drawing.FontStyle]::Bold)
-    $lblHeader.AutoSize = $true
-    $lblHeader.Location = [Drawing.Point]::new(20, 10)
-    $form.Controls.Add($lblHeader)
-
-    # Table Name
-    $lblTable = New-Object Windows.Forms.Label
-    $lblTable.Text = 'Table Name:'
-    $lblTable.Location = [Drawing.Point]::new(20, 55)
-    $lblTable.AutoSize = $true
-    $form.Controls.Add($lblTable)
-
-    $txtTable = New-Object Windows.Forms.TextBox
-    $txtTable.Location = [Drawing.Point]::new(120, 52)
-    $txtTable.Size = [Drawing.Size]::new(200, 28)
-    if ($TableName) { $txtTable.Text = $TableName }
-    $form.Controls.Add($txtTable)
-    $toolTip.SetToolTip($txtTable, 'Enter the name for the new table.')
-
-    # Schema Name
-    $lblSchema = New-Object Windows.Forms.Label
-    $lblSchema.Text = 'Schema Name:'
-    $lblSchema.Location = [Drawing.Point]::new(350, 55)
-    $lblSchema.AutoSize = $true
-    $form.Controls.Add($lblSchema)
-
-    $cmbSchema = New-Object Windows.Forms.ComboBox
-    $cmbSchema.Location = [Drawing.Point]::new(460, 52)
-    $cmbSchema.Size = [Drawing.Size]::new(200, 28)
-    $cmbSchema.DropDownStyle = 'DropDown'
-    $schemas = (Invoke-PGSQLSelect -Query "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT LIKE '%timescaledb_%'").schema_name | Sort-Object
-    $cmbSchema.Items.AddRange($schemas)
-    if ($SchemaName) { $cmbSchema.SelectedItem = $SchemaName }
-    $form.Controls.Add($cmbSchema)
-    $toolTip.SetToolTip($cmbSchema, 'Select the schema for the new table.')
-
-    # GroupBox for Columns
-    $gbColumns = New-Object Windows.Forms.GroupBox
-    $gbColumns.Text = 'Columns (check to include, select type)'
-    $gbColumns.Location = [Drawing.Point]::new(20, 100)
-    $gbColumns.Size = [Drawing.Size]::new(400, 420)
-    $form.Controls.Add($gbColumns)
-
-    $clbColumns = New-Object Windows.Forms.CheckedListBox
-    $clbColumns.Location = [Drawing.Point]::new(10, 25)
-    $clbColumns.Size = [Drawing.Size]::new(170, 370)
-    $clbColumns.CheckOnClick = $true
-    $gbColumns.Controls.Add($clbColumns)
-
-    # Data type combos for each property
-    $typeMap = @{
-        'int' = 'integer'; 'string' = 'text'; 'bool' = 'boolean'; 'System.Boolean' = 'boolean'
-        'System.Management.Automation.PSCustomObject' = 'jsonb'; 'object' = 'text'
-        'Object[]' = 'jsonb'; 'System.Object[]' = 'jsonb'; 'guid' = 'uuid'; 'datetime' = 'timestamp'
-        'decimal' = 'double precision'; 'long' = 'bigint'; 'single' = 'double precision'
-        'System.String' = 'text'; 'double' = 'double precision'; 'System.Int32' = 'integer'
-        'System.DateTime' = 'timestamp'; 'ipaddress' = 'inet'; 'uint32' = 'bigint'
-        'System.Int64' = 'bigint'; 'System.Decimal' = 'numeric'; 'byte' = 'integer'
-        'System.Net.IPAddress' = 'inet'; 'System.Double' = 'double precision'
-        'macaddress' = 'macaddr'; 'string[]' = 'text'
-    }
-    $typeOptions = $typeMap.Values | Select-Object -Unique
-
-    $properties = $Object[0] | Get-Member | Where-Object { $_.MemberType -in 'Property', 'NoteProperty' } |
-    Select-Object @{n = 'Property'; e = { $_.Name.Trim() -replace '(\(|\)|\%)', '' -replace '( |/|-)', '_' } },
-    @{n = 'DataType'; e = { $_.Definition.Split(' ')[0] } }
-
-    $comboBoxes = @{}
-    $y = 25
-    foreach ($prop in $properties) {
-        $clbColumns.Items.Add($prop.Property, $true) | Out-Null
-        $combo = New-Object Windows.Forms.ComboBox
-        $combo.Location = [Drawing.Point]::new(190, $y)
-        $combo.Size = [Drawing.Size]::new(180, 24)
-        $combo.DropDownStyle = 'DropDownList'
-        $combo.Items.AddRange($typeOptions)
-        $defaultType = $typeMap[$prop.DataType]
-        if ($defaultType) { $combo.SelectedItem = $defaultType } else { $combo.SelectedIndex = 0 }
-        $gbColumns.Controls.Add($combo)
-        $comboBoxes[$prop.Property] = $combo
-        $y += 28
-    }
-    $toolTip.SetToolTip($clbColumns, 'Check columns to include in the table. Use the dropdown to select the data type.')
-
-    # GroupBox for Primary Keys
-    $gbPK = New-Object Windows.Forms.GroupBox
-    $gbPK.Text = 'Primary Keys (check one or more)'
-    $gbPK.Location = [Drawing.Point]::new(440, 100)
-    $gbPK.Size = [Drawing.Size]::new(250, 420)
-    $form.Controls.Add($gbPK)
-
-    $clbPK = New-Object Windows.Forms.CheckedListBox
-    $clbPK.Location = [Drawing.Point]::new(10, 25)
-    $clbPK.Size = [Drawing.Size]::new(220, 370)
-    $clbPK.CheckOnClick = $true
-    foreach ($prop in $properties) {
-        $isChecked = $PrimaryKeys -and ($prop.Property -in $PrimaryKeys)
-        $clbPK.Items.Add($prop.Property, $isChecked) | Out-Null
-    }
-    $gbPK.Controls.Add($clbPK)
-    $toolTip.SetToolTip($clbPK, 'Check one or more columns to use as the primary key.')
-
-    # OK/Cancel buttons
-    $btnOK = New-Object Windows.Forms.Button
-    $btnOK.Text = 'OK'
-    $btnOK.Size = [Drawing.Size]::new(100, 36)
-    $btnOK.Location = [Drawing.Point]::new(720, 500)
-    $btnOK.Font = New-Object Drawing.Font('Segoe UI', 11, [Drawing.FontStyle]::Bold)
-    $btnOK.BackColor = [Drawing.Color]::FromArgb(0, 120, 215)
-    $btnOK.ForeColor = [Drawing.Color]::White
-    $btnOK.FlatStyle = 'Flat'
-    $btnOK.Add_Click({
-            $form.DialogResult = [Windows.Forms.DialogResult]::OK
-            $form.Close()
-        })
-    $form.Controls.Add($btnOK)
-
-    $btnCancel = New-Object Windows.Forms.Button
-    $btnCancel.Text = 'Cancel'
-    $btnCancel.Size = [Drawing.Size]::new(100, 36)
-    $btnCancel.Location = [Drawing.Point]::new(720, 550)
-    $btnCancel.Font = New-Object Drawing.Font('Segoe UI', 11, [Drawing.FontStyle]::Bold)
-    $btnCancel.BackColor = [Drawing.Color]::FromArgb(232, 17, 35)
-    $btnCancel.ForeColor = [Drawing.Color]::White
-    $btnCancel.FlatStyle = 'Flat'
-    $btnCancel.Add_Click({
-            $form.DialogResult = [Windows.Forms.DialogResult]::Cancel
-            $form.Close()
-        })
-    $form.Controls.Add($btnCancel)
-
-    # Show dialog
-    $result = $form.ShowDialog()
-    if ($result -eq [Windows.Forms.DialogResult]::Cancel) {
-        Write-Host 'Cancelled by user.'
-        return $null
-    }
-
-    # Gather selections
-    $fields = @()
-    for ($i = 0; $i -lt $clbColumns.Items.Count; $i++) {
-        if ($clbColumns.GetItemChecked($i)) {
-            $name = $clbColumns.Items[$i]
-            $fields += [PSCustomObject]@{
-                Name  = $name
-                Value = $comboBoxes[$name].SelectedItem
-            }
-        }
-    }
-    $pkey = @()
-    for ($i = 0; $i -lt $clbPK.Items.Count; $i++) {
-        if ($clbPK.GetItemChecked($i)) {
-            $pkey += $clbPK.Items[$i]
-        }
-    }
-
-    [PSCustomObject]@{
-        Fields     = $fields
-        PKey       = $pkey
-        TableName  = $txtTable.Text
-        SchemaName = $cmbSchema.Text
-    }
-}
 
 function Set-PGTablePropertiesAdvanced {
     <#
@@ -1457,16 +1234,16 @@ function Set-PGTablePropertiesAdvanced {
         $row.ComboBox.Add_SelectedIndexChanged({ Update-Preview })
         $row.NotNull.Add_CheckedChanged({ Update-Preview })
         $row.PK.Add_CheckedChanged({
-            $thisRow = $null
-            foreach ($key in $rowControls.Keys) {
-                if ($rowControls[$key].PK -eq $this) { $thisRow = $rowControls[$key]; break }
-            }
-            if ($null -ne $thisRow -and $this.Checked) {
-                $thisRow.NotNull.Checked = $true
-            }
-            Update-Preview
-            Validate-Form
-        })
+                $thisRow = $null
+                foreach ($key in $rowControls.Keys) {
+                    if ($rowControls[$key].PK -eq $this) { $thisRow = $rowControls[$key]; break }
+                }
+                if ($null -ne $thisRow -and $this.Checked) {
+                    $thisRow.NotNull.Checked = $true
+                }
+                Update-Preview
+                Validate-Form
+            })
         $row.Default.Add_TextChanged({ Update-Preview })
     }
     $txtTable.Add_TextChanged({ Update-Preview })
@@ -1565,3 +1342,67 @@ function Set-PGTablePropertiesAdvanced {
         PreviewSQL = $txtPreview.Text
     }
 }
+
+function Get-PGSQLColumns {
+    param(
+        [switch]$Detailed,
+        [switch]$ExcludeSystemColumns  
+    )
+    if ($Detailed) {
+        $Query = "SELECT * FROM information_schema.columns"
+    }
+    else {
+        $Query = "SELECT table_schema, table_name, column_name, data_type, is_nullable FROM information_schema.columns"
+    }
+    if ($ExcludeSystemColumns) {
+        $Query += " WHERE table_schema NOT LIKE '%timescaledb_%' AND table_schema NOT IN ('pg_catalog', 'information_schema')"
+    }
+
+    $Query += " ORDER BY table_schema, table_name, ordinal_position"
+    Invoke-PGSQLSelect -Query $Query
+}
+
+function Get-PGSQLTables {
+    param(
+        [switch]$Detailed
+    )
+    if ($Detailed) {
+        $Query = "SELECT * FROM information_schema.tables"
+    }
+    else {
+        $Query = "SELECT table_catalog, table_schema, table_name, table_type FROM information_schema.tables"
+    }
+    =
+    $Query += " ORDER BY table_catalog, table_schema, table_name"
+    Invoke-PGSQLSelect -Query $Query
+}
+
+function Get-PGSQLIndexes {
+    param(
+        [switch]$Detailed
+    )
+    if ($Detailed) {
+        $Query = "SELECT * FROM pg_indexes"
+    }
+    else {
+        $Query = "SELECT schemaname, tablename, indexname, indexdef FROM pg_indexes"
+    }
+    $Query += " ORDER BY schemaname, tablename, indexname"
+    Invoke-PGSQLSelect -Query $Query
+}
+
+function Get-PGSQLSchemas {
+    param(
+        [switch]$Detailed
+    )
+    if ($Detailed) {
+        $Query = "SELECT * FROM information_schema.schemata"
+    }
+    else {
+        $Query = "SELECT schema_name FROM information_schema.schemata"
+    }
+    $Query += " ORDER BY catalog_name, schema_name"
+
+    Invoke-PGSQLSelect -Query $Query
+}
+
