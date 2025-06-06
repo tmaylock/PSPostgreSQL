@@ -45,7 +45,9 @@ Function Test-PgSqlConfig {
         }
         else {
             try {
+                Write-Verbose "Loading PostgreSQL config from $ConfigPath"
                 $global:PgSqlConfig = Get-Content $ConfigPath | ConvertFrom-Json
+                Write-Debug "PostgreSQL config loaded: $($global:PgSqlConfig)"
             }
             catch {
                 Write-Error "PostgreSQL config file is invalid at $ConfigPath"
@@ -85,6 +87,7 @@ Function Set-PgSqlConfig {
         EnableCachedTableDefinitions = if ($EnableCachedTableDefinitions -eq 'Y') { $true } else { $false }
     }
     if ($null -ne $global:PgSqlConfig) {
+        Write-Verbose "Creating PostgreSQL config file at $ConfigPath"
         $global:PgSqlConfig | ConvertTo-Json | Out-File -FilePath $ConfigPath
         Write-Host -ForegroundColor Green 'Config file created successfully'
     }
@@ -250,13 +253,17 @@ Function Connect-PgSqlServer {
   
     try {
         if ($null -eq $global:PgSqlConnection -or $Force) {
+            Write-Verbose "Connecting to PostgreSQL Server: $($PSBoundParameters['Server'])"
             $PgSqlConnection = New-Object System.Data.Odbc.OdbcConnection
+
+            Write-Debug "Connection String: Driver={PostgreSQL Unicode(x64)};Server=$($PSBoundParameters['Server']);Port=$Port;Database=$($PSBoundParameters['Database']);Uid=$($PSBoundParameters['User'] );Pwd=$($PSBoundParameters['Password']);Pooling=true;"
             $PgSqlConnection.ConnectionString = "Driver={PostgreSQL Unicode(x64)};Server=$($PSBoundParameters['Server']);Port=$Port;Database=$($PSBoundParameters['Database']);Uid=$($PSBoundParameters['User'] );Pwd=$($PSBoundParameters['Password']);Pooling=true;"
             $PgSqlConnection.ConnectionTimeout = 60
             $PgSqlConnection.Open()
             $global:PgSqlConnection = $PgSqlConnection
         }
         elseif ($PgSqlConnection.State -eq 'Closed') {
+            Write-Verbose "Opening existing PostgreSQL connection"
             $PgSqlConnection.Open()
         }
         Get-PGSQLTableDefinitions
@@ -274,9 +281,17 @@ Function Disconnect-PGSQLServer {
 .SYNOPSIS
 Disconnect from current $PgSqlConnection
 #>
+    [CmdletBinding()]
+    param (
+    )
+    
     try {
         if ($PgSqlConnection.State -eq 'Open') {
+            Write-Verbose "Disconnecting from PostgreSQL Server: $($PgSqlConnection.DataSource)"
             $PgSqlConnection.Close()
+        }
+        else {
+            Write-Verbose "PostgreSQL connection is not open, current state: $($PgSqlConnection.State)"
         }
     }
     catch {
@@ -296,10 +311,12 @@ Function Invoke-PGSQLSelect {
 
     Connect-PGSQLServer
     try {
+        Write-Verbose "Executing SQL Query:`n$Query"
         [System.Data.Odbc.OdbcCommand]$pgsqlcmd = New-Object System.Data.Odbc.OdbcCommand($query, $PgSqlConnection)
         [System.Data.Odbc.odbcDataAdapter]$pgsqlda = New-Object system.Data.odbc.odbcDataAdapter($pgsqlcmd)    
         $pgsqlds = [System.Data.DataSet]::new()
         [void]$pgsqlda.Fill($pgsqlds)
+        #return $pgsqlds.Tables.Rows
         $rows = [System.Collections.Generic.List[object]]::new()
         foreach ($row in $pgsqlds.Tables[0].Rows) {
             $rows.Add($row)
@@ -576,11 +593,12 @@ Function Invoke-PGSQLInsert {
 
 
     try {
+        Write-Verbose "Executing SQL Query:`n$PgInsertQuery"
         [System.Data.Odbc.odbcDataAdapter]$da = New-Object system.Data.odbc.odbcDataAdapter
         $da.InsertCommand = New-Object System.Data.Odbc.OdbcCommand($PgInsertQuery, $PgSqlConnection)
         $da.InsertCommand.Prepare()
         [void]$da.InsertCommand.ExecuteNonQuery()
-
+        Write-Verbose "Insert query executed successfully"
     }
     catch {
         Write-Error $_
@@ -771,18 +789,25 @@ Create statement:
         $pkey_value = $pkey -join ','
         $pkey_name = $tablename + '_pkey'
 
-        $columns = foreach ($column in $pgcolumns) {
-            if ($column.property -in $pkey) { "$($column.Property) $($column.PgType) NOT NULL," }else { "$($column.Property) $($column.PgType)," }
-        }
 
-         
+        # Build columns as an array, but do not add a trailing comma to the last column
+
+        $columnsArr = @()
+        foreach ($column in $pgcolumns) {
+            $colType = $column.PgType
+            if (-not $colType) { $colType = 'text' } # fallback to text if type is missing
+            $colDef = "$($column.Property) $colType"
+            if ($column.property -in $pkey) { $colDef += ' NOT NULL' }
+            $columnsArr += $colDef
+        }
+        $columnsString = $columnsArr -join ",`n"
+
         $createschema = if ($schemaname -cmatch '[A-Z]') { "`"$schemaname`"" } else { $schemaname }
-   
-        
+
         $createtablestatement = @"
 CREATE TABLE $createschema.$tablename
 (
-$columns
+$columnsString,
 CONSTRAINT $pkey_name PRIMARY KEY ($($pkey_value))
 )
 "@
@@ -998,23 +1023,34 @@ Function Invoke-PGSqlQuery {
     }
 
     begin {
-        Connect-PGSQLServer
+        
+        $Params = @{}
+        if ($PSBoundParameters.ContainsKey('Verbose')) {
+            $Params['Verbose'] = $PSBoundParameters.Verbose
+        }
+        if ($PSBoundParameters.ContainsKey('Debug')) {
+            $Params['Debug'] = $PSBoundParameters.Debug
+        }
+
+        Connect-PGSQLServer @Params
     }
+
+
 
 
     process {
         switch ($Type) {
             'Select' { 
-                Invoke-PGSQLSelect -Query $PsBoundParameters.Query
+                Invoke-PGSQLSelect -Query $PsBoundParameters.Query @Params
                 break
             }
             'Insert' { 
-                Invoke-PGSQLInsert -InputObject $PsBoundParameters.InputObject -OnConflict $PsBoundParameters.OnConflict -Schema $PsBoundParameters.Schema -Table $PsBoundParameters.Table -Truncate $PsBoundParameters.Truncate
+                Invoke-PGSQLInsert -InputObject $PsBoundParameters.InputObject -OnConflict $PsBoundParameters.OnConflict -Schema $PsBoundParameters.Schema -Table $PsBoundParameters.Table -Truncate $PsBoundParameters.Truncate @Params
                 break
             }
             'Truncate' {
                 if ($PsBoundParameters.Truncate -eq $true) {
-                    Invoke-PGSQLTruncate -Schema $PsBoundParameters.Schema -Table $PsBoundParameters.Table
+                    Invoke-PGSQLTruncate -Schema $PsBoundParameters.Schema -Table $PsBoundParameters.Table @Params
                 }
                 else { Write-Host 'TruncateTable not true' }
                 break
@@ -1022,7 +1058,7 @@ Function Invoke-PGSqlQuery {
         }
     }
     end {
-        Disconnect-PGSQLServer
+        Disconnect-PGSQLServer @Params
     }
 }
 
