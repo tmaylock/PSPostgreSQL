@@ -23,44 +23,6 @@ Function Get-PgSqlModulePath {
 }
 
 
-Function Test-PgSqlConfig {
-    <#
-    .SYNOPSIS
-        Ensures the PostgreSQL config file exists and is valid.
-    #>
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $false)]
-        [switch]
-        $Force
-    )
-    $ModulePath = Get-PgSqlModulePath
-    $ConfigPath = Join-Path $ModulePath 'config.json'
-
-    if ($null -eq $global:PgSqlConfig -or $Force) {
-
-        if (!(Test-Path $ConfigPath)) {
-            Write-Warning "PostgreSQL config file not found at $ConfigPath"
-            Set-PgSqlConfig
-        }
-        else {
-            try {
-                Write-Verbose "Loading PostgreSQL config from $ConfigPath"
-                $global:PgSqlConfig = Get-Content $ConfigPath | ConvertFrom-Json
-                Write-Debug "PostgreSQL config loaded: $($global:PgSqlConfig)"
-            }
-            catch {
-                Write-Error "PostgreSQL config file is invalid at $ConfigPath"
-                Set-PgSqlConfig
-            }
-            if ($null -eq $global:PgSqlConfig) {
-                Write-Error "PostgreSQL config file is empty or invalid at $ConfigPath"
-                Set-PgSqlConfig
-            }
-        }
-    }
-}
-
 
 
 Function Set-PgSqlConfig {
@@ -69,22 +31,41 @@ Function Set-PgSqlConfig {
         Prompts for and sets the PostgreSQL configuration.
     #>
     [CmdletBinding()]
-    param ()
+    param (
+        [string]$Server,
+        [string]$Database,
+        [string]$User,
+        [securestring]$Password,
+        [switch]$EnableCachedTableDefinitions
+    )
     $ModulePath = Get-PgSqlModulePath
     $ConfigPath = Join-Path $ModulePath 'config.json'
 
-    $Server = Read-Host -Prompt 'Enter PostgreSQL Server'
-    $Database = Read-Host -Prompt 'Enter PostgreSQL Database'
-    $User = Read-Host -Prompt 'Enter PostgreSQL User'
-    $Password = Read-Host -Prompt 'Enter PostgreSQL Password' -AsSecureString
+    if ($null -eq $PSBoundParameters['Server']) {
+        $Server = Read-Host -Prompt 'Enter PostgreSQL Server'
+    }
+    if ($null -eq $PSBoundParameters['Database']) {
+        $Database = Read-Host -Prompt 'Enter PostgreSQL Database'
+    }
+    if ($null -eq $PSBoundParameters['User']) {
+        $User = Read-Host -Prompt 'Enter PostgreSQL User'
+    }
+    if ($null -eq $PSBoundParameters['Password']) {
+        $Password = Read-Host -Prompt 'Enter PostgreSQL Password' -AsSecureString
+    }
     $PasswordString = $Password | ConvertFrom-SecureString
-    $EnableCachedTableDefinitions = Read-Host -Prompt 'Enable Cached Table Definitions? (Y/N) (Increases performance by caching table definitions in memory)'
+    if ($null -eq $EnableCachedTableDefinitions) {
+        $EnableCachedTableDefs = Read-Host -Prompt 'Enable Cached Table Definitions? (Y/N) (Increases performance by caching table definitions in memory)'
+    }
+    else {
+        $EnableCachedTableDefs = 'Y'
+    }
     $global:PgSqlConfig = @{
         Server                       = $Server
         Database                     = $Database
         User                         = $User
         Password                     = $PasswordString
-        EnableCachedTableDefinitions = if ($EnableCachedTableDefinitions -eq 'Y') { $true } else { $false }
+        EnableCachedTableDefinitions = if ($EnableCachedTableDefs -eq 'Y') { $true } else { $false }
     }
     if ($null -ne $global:PgSqlConfig) {
         Write-Verbose "Creating PostgreSQL config file at $ConfigPath"
@@ -105,10 +86,32 @@ Function Get-PgSqlConfig {
     #>
     [CmdletBinding()]
     param ()
-    if ($null -eq $global:PgSqlConfig) {
-        Test-PgSqlConfig
+    
+    try {
+
+        $ModulePath = Get-PgSqlModulePath
+        $ConfigPath = Join-Path $ModulePath 'config.json'
+
+        if ($null -eq $global:PgSqlConfig) {
+            $ConfigContent = Get-Content $ConfigPath -ErrorAction SilentlyContinue
+            if ($ConfigContent) {
+                $global:PgSqlConfig = $ConfigContent | ConvertFrom-Json
+                return $global:PgSqlConfig
+            }
+            else {
+                Write-Warning "Config file does not exist at '$ModulePath'"
+                Write-Warning "Create a config file with 'Set-PgSqlConfig'"
+                return $null
+            }
+        }
+        else {
+            return $global:PgSqlConfig
+        }
     }
-    return $global:PgSqlConfig
+    catch {
+        Write-Error $_.exception
+    }
+    
 }
 
 
@@ -135,14 +138,14 @@ Function Test-PGODBCDriver {
 Function Get-LatestPGODBCDriver {
     $ModulePath = Get-PgSqlModulePath
 
-    $uri = "https://api.github.com/repos/postgresql-interfaces/psqlodbc/releases/latest"
+    $uri = 'https://api.github.com/repos/postgresql-interfaces/psqlodbc/releases/latest'
 
     $headers = @{
         'User-Agent' = 'PowerShell'
     }
 
     $response = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
-    $latestmsi = $response.assets | Where-Object { $_.name -eq "psqlodbc_x64.msi" } 
+    $latestmsi = $response.assets | Where-Object { $_.name -eq 'psqlodbc_x64.msi' } 
 
     $assetUri = $latestmsi.browser_download_url
     $assetName = $latestmsi.name
@@ -151,9 +154,9 @@ Function Get-LatestPGODBCDriver {
     Start-BitsTransfer -Source $assetUri -Destination $ModulePath
     Write-Host "Downloaded $assetName"
 
-    write-host "installed $assetname from $modulepath"
+    Write-Host "installed $assetname from $modulepath"
     Start-Process msiexec -ArgumentList "/i `"$ModulePath\$assetName`" /qn /norestart" -Wait -NoNewWindow
-    write-host "Installed $assetName"
+    Write-Host "Installed $assetName"
 
 }
 
@@ -171,8 +174,8 @@ Function Get-PGSQLTableDefinitions {
     .NOTES
         This function exists to reduce the amount of queries done against the DB. By storing the table definitions in a variable, we can reference this in memory instead of querying the DB before each insert.
     #>
-    if ($PgSqlConnection -eq $null) {
-        Write-Error "PostgreSQL connection is not established. Please connect using Connect-PgSqlServer."
+    if ($null -eq $PgSqlConnection) {
+        Write-Error 'PostgreSQL connection is not established. Please connect using Connect-PgSqlServer.'
         return
     }
     if ('' -eq [string]$tabledefinitions -or $Force) {
@@ -196,7 +199,7 @@ Function Get-PGSQLTableDefinitions {
             }
             $global:tabledefinitions = $rows.ToArray() 
 
-            Write-Verbose "Retrieved table definitions from PostgreSQL"
+            Write-Verbose 'Retrieved table definitions from PostgreSQL'
 
         }
         catch {
@@ -219,19 +222,19 @@ Function Connect-PgSqlServer {
     #>
     [CmdletBinding()]
     param (
-        [Parameter()]
+        [Parameter(ParameterSetName = 'Config', Position = 0)]
         [ValidateNotNullOrEmpty()]
         [string]
         $User,
-        [Parameter()]
+        [Parameter(ParameterSetName = 'Config', Position = 1)]
         [ValidateNotNullOrEmpty()]
         [string]
         $Password,
-        [Parameter()]
+        [Parameter(ParameterSetName = 'Config', Position = 2)]
         [ValidateNotNullOrEmpty()]
         [string]
         $Database,
-        [Parameter()]
+        [Parameter(ParameterSetName = 'Config', Position = 3)]
         [ValidateNotNullOrEmpty()]
         [string]
         $Server,
@@ -242,40 +245,49 @@ Function Connect-PgSqlServer {
         [switch]
         $Force
     )
+    
+    #if we don't specify any parameters from the set 'Config', use the config file
+    if ($PSCmdlet.ParameterSetName -ne 'Config') {
+        #if the config file doesn't exist, throw
+        if (!(Get-PgSqlConfig)) {
+            throw
+        }
+        else {
+            #set our connection variables
+            $User = $global:PgSqlConfig.User
+            $Password = $global:PgSqlConfig.Password
+            $Database = $global:PgSqlConfig.Database
+            $Server = $global:PgSqlConfig.Server
+        }
+    }
+    else {
+        
+        if (-not ($User -and $Password -and $Database -and $Server)) {
+            throw "All 'Config' parameters must be specified together."
+        }
 
-    Test-PgSqlConfig
+    
+    }
+
+
+        
+        
+
     Test-PGODBCDriver
-
-
-    if ($Null -eq $PSBoundParameters['User'] ) {
-        $PSBoundParameters['User'] = $global:PgSqlConfig.User
-    }
-    if ($Null -eq $PSBoundParameters['Password'] ) {
-        $PSBoundParameters['Password'] = $global:PgSqlConfig.Password
-    }
-    if ($Null -eq $PSBoundParameters['Database'] ) {
-        $PSBoundParameters['Database'] = $global:PgSqlConfig.Database
-    }
-    if ($Null -eq $PSBoundParameters['Server'] ) {
-        $PSBoundParameters['Server'] = $global:PgSqlConfig.Server
-    }
-    
-
-    
   
     try {
         if ($null -eq $global:PgSqlConnection -or $Force) {
-            Write-Verbose "Connecting to PostgreSQL Server: $($PSBoundParameters['Server'])"
+            Write-Verbose "Connecting to PostgreSQL Server: $Server"
             $PgSqlConnection = New-Object System.Data.Odbc.OdbcConnection
 
-            Write-Debug "Connection String: Driver={PostgreSQL Unicode(x64)};Server=$($PSBoundParameters['Server']);Port=$Port;Database=$($PSBoundParameters['Database']);Uid=$($PSBoundParameters['User'] );Pwd=$($PSBoundParameters['Password']);Pooling=true;"
-            $PgSqlConnection.ConnectionString = "Driver={PostgreSQL Unicode(x64)};Server=$($PSBoundParameters['Server']);Port=$Port;Database=$($PSBoundParameters['Database']);Uid=$($PSBoundParameters['User'] );Pwd=$($PSBoundParameters['Password']);Pooling=true;"
+            Write-Debug "Connection String: Driver={PostgreSQL Unicode(x64)};Server=$Server;Port=$Port;Database=$Database;Uid=$User;Pwd=$Password;Pooling=true;"
+            $PgSqlConnection.ConnectionString = "Driver={PostgreSQL Unicode(x64)};Server=$Server;Port=$Port;Database=$Database;Uid=$User;Pwd=$Password;Pooling=true;"
             $PgSqlConnection.ConnectionTimeout = 60
             $PgSqlConnection.Open()
             $global:PgSqlConnection = $PgSqlConnection
         }
         elseif ($PgSqlConnection.State -eq 'Closed') {
-            Write-Verbose "Opening existing PostgreSQL connection"
+            Write-Verbose 'Opening existing PostgreSQL connection'
             $PgSqlConnection.Open()
         }
         Get-PGSQLTableDefinitions
@@ -426,13 +438,18 @@ Function Set-PGSQLInsert {
         }
         Write-Debug "[$fn] Insert columns: $($insertcolumns -join ', ')"
         Write-Debug "[$fn] Select columns: $($selcolumns -join ', ')"
-
-        if (-not (Compare-Object @($comparecolumns) @($pgcolumns.name)) ) {
-            Write-Verbose "[$fn] No column differences detected between input and table."
+        Write-Verbose "Compare Columns: `r`n $comparecolumns"
+        try {
+            if (-not (Compare-Object @($comparecolumns) @($pgcolumns.name)) ) {
+                Write-Verbose "[$fn] No column differences detected between input and table."
+            }
+            else {
+                Write-Verbose "[$fn] InputObject columns differ from table, selecting only matching columns."
+                $InputObject = $InputObject | Select-Object -Property $selcolumns
+            }
         }
-        else {
-            Write-Verbose "[$fn] InputObject columns differ from table, selecting only matching columns."
-            $InputObject = $InputObject | Select-Object -Property $selcolumns
+        catch {
+            Write-Error 'Error while comparing input object columns with postgres column definitions, make sure your input object is correct'
         }
 
         $pgcolumns_string = [System.String]::Join(', ', $insertcolumns)
@@ -633,7 +650,7 @@ Function Invoke-PGSQLInsert {
         $da.InsertCommand = New-Object System.Data.Odbc.OdbcCommand($PgInsertQuery, $PgSqlConnection)
         $da.InsertCommand.Prepare()
         [void]$da.InsertCommand.ExecuteNonQuery()
-        Write-Verbose "Insert query executed successfully"
+        Write-Verbose 'Insert query executed successfully'
     }
     catch {
         Write-Error $_
@@ -1443,16 +1460,16 @@ function Get-PGSQLColumns {
         [switch]$ExcludeSystemColumns  
     )
     if ($Detailed) {
-        $Query = "SELECT * FROM information_schema.columns"
+        $Query = 'SELECT * FROM information_schema.columns'
     }
     else {
-        $Query = "SELECT table_schema, table_name, column_name, data_type, is_nullable FROM information_schema.columns"
+        $Query = 'SELECT table_schema, table_name, column_name, data_type, is_nullable FROM information_schema.columns'
     }
     if ($ExcludeSystemColumns) {
         $Query += " WHERE table_schema NOT LIKE '%timescaledb_%' AND table_schema NOT IN ('pg_catalog', 'information_schema')"
     }
 
-    $Query += " ORDER BY table_schema, table_name, ordinal_position"
+    $Query += ' ORDER BY table_schema, table_name, ordinal_position'
     Invoke-PGSQLQuery -Type Select -Query $Query
 }
 
@@ -1461,13 +1478,13 @@ function Get-PGSQLTables {
         [switch]$Detailed
     )
     if ($Detailed) {
-        $Query = "SELECT * FROM information_schema.tables"
+        $Query = 'SELECT * FROM information_schema.tables'
     }
     else {
-        $Query = "SELECT table_catalog, table_schema, table_name, table_type FROM information_schema.tables"
+        $Query = 'SELECT table_catalog, table_schema, table_name, table_type FROM information_schema.tables'
     }
     
-    $Query += " ORDER BY table_catalog, table_schema, table_name"
+    $Query += ' ORDER BY table_catalog, table_schema, table_name'
     Invoke-PGSQLQuery -Type Select -Query $Query
 }
 
@@ -1476,12 +1493,12 @@ function Get-PGSQLIndexes {
         [switch]$Detailed
     )
     if ($Detailed) {
-        $Query = "SELECT * FROM pg_indexes"
+        $Query = 'SELECT * FROM pg_indexes'
     }
     else {
-        $Query = "SELECT schemaname, tablename, indexname, indexdef FROM pg_indexes"
+        $Query = 'SELECT schemaname, tablename, indexname, indexdef FROM pg_indexes'
     }
-    $Query += " ORDER BY schemaname, tablename, indexname"
+    $Query += ' ORDER BY schemaname, tablename, indexname'
     Invoke-PGSQLQuery -Type Select -Query $Query
 }
 
@@ -1490,12 +1507,12 @@ function Get-PGSQLSchemas {
         [switch]$Detailed
     )
     if ($Detailed) {
-        $Query = "SELECT * FROM information_schema.schemata"
+        $Query = 'SELECT * FROM information_schema.schemata'
     }
     else {
-        $Query = "SELECT schema_name FROM information_schema.schemata"
+        $Query = 'SELECT schema_name FROM information_schema.schemata'
     }
-    $Query += " ORDER BY catalog_name, schema_name"
+    $Query += ' ORDER BY catalog_name, schema_name'
 
     Invoke-PGSQLQuery -Type Select -Query $Query
 }
