@@ -787,11 +787,13 @@ Create statement:
             'System.DateTime',
             'ipaddress',
             'uint32',
+            'uint64',
             'byte',
             'System.Net.IPAddress',
             'System.Double',
             'short',
-            'string[]'                                 
+            'string[]',
+            'xml'                                 
         )
         $missingtypes = @()
 
@@ -829,8 +831,8 @@ Create statement:
         $keywordspattern = "($($($sqlkeywords -replace '^.{0}','^' -replace '.{0}$','$') -join '|'))"
 
         $pght = @{}
-        $pgfields = $fields | Select-Object @{name = 'Name'; expression = { $_.Name.ToLower() -replace $keywordspattern, '"$1"' } }, Value
-        $pgfields | ForEach-Object { $pght[$_.Name] = $_.value }
+        $pgfields = $fields | Select-Object @{name = 'Name'; expression = { $_.Name.ToLower() -replace $keywordspattern, '"$1"' } }, type
+        $pgfields | ForEach-Object { $pght[$_.Name] = $_.type }
 
         $pgdefinitions = $definitions | Select-Object @{name = 'property'; expression = { $_.Property.ToLower() -replace $keywordspattern, '"$1"' } }, datatype
         $pgdefinitions = $pgdefinitions | Select-Object property, datatype, @{name = 'PGType'; expression = { $pght["$($_.Property)"] } }
@@ -844,22 +846,17 @@ Create statement:
 
         # Build columns as an array, but do not add a trailing comma to the last column
 
-        $columnsArr = @()
-        foreach ($column in $pgcolumns) {
-            $colType = $column.PgType
-            if (-not $colType) { $colType = 'text' } # fallback to text if type is missing
-            $colDef = "$($column.Property) $colType"
-            if ($column.property -in $pkey) { $colDef += ' NOT NULL' }
-            $columnsArr += $colDef
+        $columns = foreach ($column in $pgcolumns) {
+            if ($column.property -in $pkey) { "$($column.Property) $($column.PgType) NOT NULL" } else { "$($column.Property) $($column.PgType)" }
         }
-        $columnsString = $columnsArr -join ",`n"
+        $createcolumns = $columns -join ','
 
         $createschema = if ($schemaname -cmatch '[A-Z]') { "`"$schemaname`"" } else { $schemaname }
 
         $createtablestatement = @"
 CREATE TABLE $createschema.$tablename
 (
-$columnsString,
+$createcolumns,
 CONSTRAINT $pkey_name PRIMARY KEY ($($pkey_value))
 )
 "@
@@ -1201,6 +1198,7 @@ function Set-PGTablePropertiesAdvanced {
         'System.Int64' = 'bigint'; 'System.Decimal' = 'numeric'; 'byte' = 'integer'
         'System.Net.IPAddress' = 'inet'; 'System.Double' = 'double precision'
         'macaddress' = 'macaddr'; 'string[]' = 'text'
+        'xml' = 'xml'
     }
     $typeOptions = $typeMap.Values | Select-Object -Unique
 
